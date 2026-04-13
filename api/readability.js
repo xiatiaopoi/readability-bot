@@ -4,34 +4,45 @@ const { JSDOM } = require("jsdom");
 const { encode: htmlEntitiesEscape } = require("html-entities");
 const createDOMPurify = require("dompurify");
 
+// 确保 _common.js 与此文件在同一目录下
 const { APP_URL, constructIvUrl, DEFAULT_USER_AGENT_SUFFIX, FALLBACK_USER_AGENT } = require("./_common.js");
 
-module.exports = async (request, response) => {
-  if ((request.headers["user-agent"] ?? "").includes("readability-bot")) {
-    response.send(EASTER_EGG_PAGE);
-    return;
+// Netlify 函数入口：必须是 exports.handler
+exports.handler = async (event, context) => {
+  // 1. 适配参数获取 (Netlify 使用 event.queryStringParameters)
+  let { url, type, format } = event.queryStringParameters || {};
+  const headers = event.headers || {};
+  const userAgent = headers["user-agent"] || "";
+
+  if (userAgent.includes("readability-bot")) {
+    return { statusCode: 200, body: EASTER_EGG_PAGE, headers: { "Content-Type": "text/html" } };
   }
-  let { url, /*selector,*/ type, format } = request.query;
+
   if (!format) {
-    format = type; // the type param will be deprecated in favor of format
+    format = type;
   }
-  if (!url & (format !== "json")) {
-    response.redirect(APP_URL);
-    return;
+  
+  if (!url && (format !== "json")) {
+    return {
+      statusCode: 302,
+      headers: { Location: APP_URL },
+      body: ''
+    };
   }
+
   let meta, upstreamResponse;
   try {
     if (!isValidUrl(url)) {
-      response.status(400).send("Invalid URL");
-      return;
+      return { statusCode: 400, body: "Invalid URL" };
     }
-    const headers = constructUpstreamRequestHeaders(request.headers);
-    console.debug("RH: ", headers);
-    upstreamResponse = await fetch(url, {
-      headers,
-    });
-    console.debug("UP: ", upstreamResponse);
-    const dom = new JSDOM(await upstreamResponse.textConverted(), { url: url });
+
+    const upstreamHeaders = constructUpstreamRequestHeaders(headers);
+    
+    // 注意：这里需要 node-fetch ^2.6.1 才能支持 textConverted()
+    upstreamResponse = await fetch(url, { headers: upstreamHeaders });
+    
+    const bodyText = await upstreamResponse.text(); // 改用 text() 兼容性更好
+    const dom = new JSDOM(bodyText, { url: url });
     const DOMPurify = createDOMPurify(dom.window);
     const doc = dom.window.document;
     fixImgLazyLoadFromDataSrc(doc);
